@@ -1,0 +1,36 @@
+server:
+  port: 8085 # A new, dedicated port
+
+spring:
+  application:
+    name: payment-service
+  # ===================================================================
+  # SECURITY CONFIGURATION (OAUTH2 RESOURCE SERVER)
+  # ===================================================================
+  # This section provides the recipe for Spring to automatically create the JwtDecoder bean.
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # This property is used to validate the 'iss' (issuer) claim inside the JWT.
+          # It MUST be the same value as 'app.jwt.issuer' in your auth-service.
+          issuer: "https://smartbridgein.com" # Corrected issuer to match standard
+
+          # This property provides the shared secret to validate the JWT's signature.
+          # It MUST be the exact same 'app.jwt.secret-key' from your auth-service.
+          secret-key: "YourSuperStrongAndLongSecretKeyForHmacShaAlgorithmsAtLeast256Bits"
+
+app:
+  firebase:
+    service-account-path: "google-services.json"
+
+# Razorpay Configuration (Use environment variables in production)
+razorpay:
+  key-id: "RAZORPAY_KEY_ID"
+  key-secret: "RAZORPAY_KEY_SECRET"
+  webhook-secret: "RAZORPAY_WEBHOOK_SECRET" # For verifying webhooks
+
+  # Configuration to add a "Bearer Token" authorization button to the Swagger UI
+  # This allows developers to test secure endpoints directly from the documentation.
+  default-consumes-media-type: application/json
+  default-produces-media-type: application/json
