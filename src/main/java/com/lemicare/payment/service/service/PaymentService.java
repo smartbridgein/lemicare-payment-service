@@ -1,5 +1,6 @@
 package com.lemicare.payment.service.service;
 
+
 import com.cosmicdoc.common.model.PaymentOrder;
 import com.cosmicdoc.common.repository.PaymentOrderRepository;
 import com.cosmicdoc.common.util.IdGenerator;
@@ -7,16 +8,23 @@ import com.google.cloud.Timestamp;
 import com.lemicare.payment.service.dto.request.CreateOrderRequest;
 import com.lemicare.payment.service.dto.request.VerifySignatureRequest;
 import com.lemicare.payment.service.dto.response.CreateOrderResponse;
+import com.lemicare.payment.service.dto.response.PaymentOrderStatusResponse;
 import com.lemicare.payment.service.exception.ResourceNotFoundException;
 import com.lemicare.payment.service.util.SignatureVerifier;
 import com.razorpay.Order;
+import com.razorpay.Payment;
 import com.razorpay.RazorpayClient;
 import com.razorpay.RazorpayException;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
+import org.springframework.web.bind.annotation.GetMapping;
+
+import java.time.ZonedDateTime;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -123,4 +131,73 @@ public class PaymentService {
             // Log the error
         }
     }
+
+    public List<Payment> listPaymentsForOrg(String orgId, ZonedDateTime from, ZonedDateTime to) {
+        try {
+            JSONObject params = new JSONObject();
+            // Razorpay uses Unix timestamps (seconds)
+            if (from != null) params.put("from", from.toEpochSecond());
+            if (to != null) params.put("to", to.toEpochSecond());
+            params.put("count", 100); // Add pagination for a real app
+
+            // NOTE: This fetches directly from Razorpay.
+            // A more scalable approach is to store a copy of the payment
+            // object in your own DB and query that instead.
+            return razorpayClient.payments.fetchAll(params);
+        } catch (RazorpayException e) {
+            throw new RuntimeException("Failed to fetch payments from Razorpay.", e);
+        }
+    }
+
+    public Payment fetchPayment(String orgId, String paymentId) {
+        try {
+            // This is a direct API call to get the latest status of a payment.
+            return razorpayClient.payments.fetch(paymentId);
+        } catch (RazorpayException e) {
+            throw new ResourceNotFoundException("Payment with ID " + paymentId + " not found on Razorpay.", e);
+        }
+    }
+
+    public Payment capturePayment(String orgId, String paymentId, double amount) {
+        try {
+            JSONObject captureRequest = new JSONObject();
+            captureRequest.put("amount", (int) (amount * 100));
+            captureRequest.put("currency", "INR");
+            return razorpayClient.payments.capture(paymentId, captureRequest);
+        } catch (RazorpayException e) {
+            throw new RuntimeException("Failed to capture payment " + paymentId, e);
+        }
+    }
+
+    public PaymentOrderStatusResponse getOrderStatus(String orgId, String branchId, String orderId) {
+        // Find the order in your own database, scoped by tenant.
+        PaymentOrder order = paymentOrderRepository.findById(orgId, branchId, orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment order with ID " + orderId + " not found."));
+
+        // Map the internal model to a clean response DTO.
+        return PaymentOrderStatusResponse.from(order);
+    }
+
+    public void cancelOrder(String orgId, String branchId, String orderId) {
+        // Find the order in your database.
+        PaymentOrder order = paymentOrderRepository.findById(orgId, branchId, orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment order with ID " + orderId + " not found."));
+
+        // Business logic check: You should only be able to cancel an order that hasn't been paid.
+        if ("PAID".equals(order.getStatus())) {
+            throw new IllegalStateException("Cannot cancel an order that has already been paid.");
+        }
+
+        // Update the status to CANCELLED.
+        order.setStatus("CANCELLED");
+        order.setUpdatedAt(Timestamp.now());
+
+        // Save the change back to the database.
+        paymentOrderRepository.save(order);
+
+        // Optional: You could publish a "PAYMENT_CANCELLED" event here
+        // if the originating service needs to know (e.g., to unlock a reserved item).
+    }
+
 }
+
